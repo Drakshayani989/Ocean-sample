@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ocean Hazard Management Live Prototype</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
+<style>
+body { font-family: Arial, sans-serif; margin:0; padding:0; }
+header { background:#0077b6; color:white; padding:10px 20px; }
+header h1 { margin:0; font-size:24px; }
+#login, #container { padding:20px; }
+#container { display:flex; flex-wrap:wrap; }
+#form-container { flex:1; min-width:300px; margin-right:20px; }
+#map { flex:2; min-width:300px; height:500px; margin-bottom:20px; }
+input, textarea, select, button { width:100%; padding:8px; margin-top:10px; box-sizing:border-box; }
+#reports, .social-feed { margin-top:20px; max-height:200px; overflow-y:auto; border:1px solid #ccc; padding:10px; }
+.report-item, .feed-item { border-bottom:1px solid #ddd; padding:5px; margin-bottom:5px; }
+.report-item:last-child, .feed-item:last-child { border:none; }
+img, video { max-width:150px; display:block; margin-top:5px; }
+.filters { margin-top:10px; }
+.language-select { margin-top:10px; }
+</style>
+</head>
+<body>
+
+<header>
+<h1>Ocean Hazard Management Live Prototype</h1>
+</header>
+
+<div id="login">
+<h2>Register / Login</h2>
+<input type="text" id="username" placeholder="Enter your name">
+<select id="role">
+<option value="citizen">Citizen</option>
+<option value="official">Official</option>
+<option value="analyst">Analyst</option>
+</select>
+<select id="language" class="language-select" onchange="switchLanguage()">
+<option value="en">English</option>
+<option value="hi">Hindi</option>
+</select>
+<button onclick="login()">Login</button>
+</div>
+
+<div id="container" style="display:none;">
+  <div id="form-container">
+    <h2 id="form-title">Submit a Hazard Report</h2>
+    <input type="text" id="location" placeholder="Location (City / Coordinates)">
+    <select id="eventType">
+      <option value="high_wave">High Wave</option>
+      <option value="tsunami">Tsunami</option>
+      <option value="flood">Flood</option>
+      <option value="coastal_damage">Coastal Damage</option>
+      <option value="swell_surge">Swell Surge</option>
+    </select>
+    <textarea id="description" placeholder="Describe the hazard"></textarea>
+    <input type="file" id="media">
+    <button onclick="submitReport()">Submit Report</button>
+    <button onclick="goOnline()">Sync Offline Reports</button>
+
+    <div class="filters">
+      <h3>Filters</h3>
+      <select id="filterType" onchange="applyFilters()">
+        <option value="">All Types</option>
+        <option value="high_wave">High Wave</option>
+        <option value="tsunami">Tsunami</option>
+        <option value="flood">Flood</option>
+        <option value="coastal_damage">Coastal Damage</option>
+        <option value="swell_surge">Swell Surge</option>
+      </select>
+    </div>
+
+    <h2>Recent Reports</h2>
+    <div id="reports"></div>
+
+    <h2>Social Media Feed (Live Simulation)</h2>
+    <div class="social-feed" id="socialFeed"></div>
+  </div>
+
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
+<script>
+let userRole = null;
+let userName = "";
+let lang = "en";
+const reports = [];
+const offlineReports = [];
+let map, markersCluster, heatLayer, socialLayer;
+
+let socialPostsQueue = [
+  {text:"High waves observed near Mumbai coast #hazard", lat:18.96, lng:72.82},
+  {text:"Flooded streets in Kochi #emergency", lat:9.97, lng:76.28},
+  {text:"Tsunami warning? Heavy rainfall in Visakhapatnam #alert", lat:17.69, lng:83.21},
+  {text:"Swell surge reported at Chennai #alert", lat:13.08, lng:80.27},
+  {text:"Nothing unusual at Goa today", lat:15.49, lng:73.82}
+];
+
+function login(){
+  userName = document.getElementById("username").value;
+  userRole = document.getElementById("role").value;
+  lang = document.getElementById("language").value;
+  if(!userName){ alert("Enter name"); return; }
+  document.getElementById("login").style.display = "none";
+  document.getElementById("container").style.display = "flex";
+  initMap();
+  applyLanguage();
+  startSocialFeedSimulation();
+  startReportSimulation();
+}
+
+function initMap(){
+  map = L.map('map').setView([20.5937, 78.9629], 5);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  
+  markersCluster = L.markerClusterGroup({spiderfyOnMaxZoom:true, showCoverageOnHover:false});
+  map.addLayer(markersCluster);
+
+  heatLayer = L.heatLayer([], {radius: 25, blur: 15, maxZoom: 10}).addTo(map);
+  socialLayer = L.layerGroup().addTo(map);
+}
+
+function submitReport(){
+  const location = document.getElementById('location').value;
+  const description = document.getElementById('description').value;
+  const eventType = document.getElementById('eventType').value;
+  const mediaFile = document.getElementById('media').files[0];
+
+  if(!location || !description){ alert("Fill all fields"); return; }
+
+  const lat = 15 + Math.random()*20;
+  const lng = 70 + Math.random()*20;
+  const mediaURL = mediaFile ? URL.createObjectURL(mediaFile) : null;
+
+  const report = {name:userName, location, description, eventType, mediaURL, lat, lng, role:userRole};
+  
+  if(!navigator.onLine){
+    offlineReports.push(report);
+    alert("Saved offline! Will sync later.");
+    return;
+  }
+
+  reports.push(report);
+  addMarker(report);
+  updateHeatmap();
+  displayReports();
+}
+
+function goOnline(){
+  offlineReports.forEach(r=>{
+    reports.push(r);
+    addMarker(r);
+  });
+  offlineReports.length = 0;
+  updateHeatmap();
+  displayReports();
+  alert("Offline reports synced!");
+}
+
+function addMarker(report){
+  let popupContent = `<b>${report.name}</b><br>${report.description}<br>${report.location}<br>Type: ${report.eventType}`;
+  if(report.mediaURL){
+    if(report.mediaURL.endsWith(".mp4")) popupContent += `<br><video src="${report.mediaURL}" controls></video>`;
+    else popupContent += `<br><img src="${report.mediaURL}" />`;
+  }
+  const marker = L.marker([report.lat, report.lng]);
+  marker.bindPopup(popupContent);
+  markersCluster.addLayer(marker);
+}
+
+function updateHeatmap(){
+  const points = reports.map(r => [r.lat, r.lng, 1]);
+  heatLayer.setLatLngs(points);
+}
+
+function displayReports(){
+  const reportsDiv = document.getElementById("reports");
+  reportsDiv.innerHTML = "";
+  const filterType = document.getElementById("filterType").value;
+  reports.filter(r=>!filterType||r.eventType===filterType).forEach(r=>{
+    const div = document.createElement("div");
+    div.className="report-item";
+    let mediaHTML = r.mediaURL ? (r.mediaURL.endsWith(".mp4")?`<video src="${r.mediaURL}" controls></video>`:`<img src="${r.mediaURL}" />`) : "";
+    div.innerHTML = `<b>${r.name}</b> (${r.role}) - ${r.location}<br>${r.description}<br>Type: ${r.eventType}<br>${mediaHTML}`;
+    reportsDiv.prepend(div);
+  });
+}
+
+// --- Social Feed Simulation ---
+function startSocialFeedSimulation(){
+  const feedDiv = document.getElementById("socialFeed");
+  function showNextPost(){
+    if(socialPostsQueue.length === 0) return;
+    const post = socialPostsQueue.shift();
+    const div = document.createElement("div");
+    div.className="feed-item";
+    const hazardDetected = post.text.toLowerCase().includes("hazard")||post.text.toLowerCase().includes("flood")||post.text.toLowerCase().includes("tsunami") ? "⚠️ Hazard Detected" : "✅ No Hazard";
+    div.innerHTML = `${post.text}<br><b>Status:</b> ${hazardDetected}`;
+    feedDiv.prepend(div);
+
+    // Add to map as hotspot
+    const color = hazardDetected.includes("Hazard") ? 'red':'green';
+    const circle = L.circle([post.lat, post.lng], {radius:50000, color:color, fillColor:color, fillOpacity:0.3});
+    circle.bindPopup(post.text);
+    socialLayer.addLayer(circle);
+
+    // Repeat every 3 seconds
+    if(socialPostsQueue.length>0) setTimeout(showNextPost, 3000);
+  }
+  showNextPost();
+}
+
+// --- Optional: Simulate new incoming hazard reports ---
+function startReportSimulation(){
+  let counter = 1;
+  function addRandomReport(){
+    const eventTypes = ["high_wave","tsunami","flood","coastal_damage","swell_surge"];
+    const report = {
+      name:"AutoReporter",
+      location:"Random Place "+counter,
+      description:"Simulated hazard "+counter,
+      eventType:eventTypes[Math.floor(Math.random()*eventTypes.length)],
+      lat:15 + Math.random()*20,
+      lng:70 + Math.random()*20,
+      role:"citizen"
+    };
+    reports.push(report);
+    addMarker(report);
+    updateHeatmap();
+    displayReports();
+    counter++;
+    if(counter<=10) setTimeout(addRandomReport, 5000);
+  }
+  addRandomReport();
+}
+
+// Language switch
+function switchLanguage(){ lang = document.getElementById("language").value; applyLanguage(); }
+function applyLanguage(){ document.getElementById("form-title").innerText = lang==="hi"?"खतरे की रिपोर्ट जमा करें":"Submit a Hazard Report"; }
+
+function applyFilters(){ displayReports(); }
+
+</script>
+</body>
+</html>
